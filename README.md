@@ -2,15 +2,19 @@
 
 本地 HTTP 代理，只做一件事：把明文 HTTP 的 `User-Agent` 改成普通浏览器 UA，
 绕过网络侧「Steam UA + `/depot/*/chunk/*`」的上网行为管理拦截。HTTPS(CONNECT) 只做隧道转发。
-监听 `127.0.0.1:8899`（可传参换端口）。背景与排障见 `~/Documents/Agent/Steam下载修复记录.md`。
+监听 `127.0.0.1:8899`（可传参换端口）。
+
+完整的背景、实测数据、Mihomo/Sparkle 配置与回退方法见
+[Steam 下载修复记录](docs/Steam下载修复记录.md)。
 
 ## 目录
 
 | 目录 | 内容 |
 |---|---|
-| `go/` | Go 实现（当前推荐）：`main.go`、`go.mod`、`Makefile` |
+| `go/` | Go 实现（推荐）：`main.go`、`go.mod`、`Makefile` |
 | `python/` | Python 原版：`steam-ua-proxy.py`、`pyproject.toml`、`uv.lock`、`.venv` |
 | `scripts/` | 两版共用的行为对等测试 |
+| `docs/` | [修复记录](docs/Steam下载修复记录.md) |
 
 两版协议行为保持一致：绝对 URL → 相对路径改写、`Drop` 掉 `User-Agent`/`Proxy-Connection`/`Expect`、
 请求体按 `Content-Length` 与 `chunked` 分帧转发、跳过 `1xx`、`HEAD`/`204`/`304` 不读 body、
