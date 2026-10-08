@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Go 构建产物
+/go/steam-ua-proxy
+/go/steam-ua-proxy-plain
+
+# PyInstaller 自动生成的 spec
+/python/*.spec

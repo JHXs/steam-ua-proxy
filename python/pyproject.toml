@@ -1,0 +1,16 @@
+[project]
+name = "steam-ua-proxy"
+version = "0.1.0"
+description = "本地 HTTP 代理：把明文 HTTP 的 User-Agent 改成普通浏览器"
+authors = [
+    { name = "hansel", email = "58466533+JHXs@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pyinstaller>=6.22.3",
+]
+
+# 本目录不是 Python 包，只用来固定 pyinstaller 依赖。
+# 没有这个开关时 uv 会去找 src/steam_ua_proxy/ 并构建失败。
+[tool.uv]
+package = false
