@@ -1,7 +1,7 @@
 # Steam 下载修复记录
 
 > 环境：EndeavourOS / Linux x86_64；代理监听 `127.0.0.1:8899`。记录时间：2026-10-07
-> 本仓库提供两个等价实现（`go/` 与 `python/`），本机当前部署的是 PyInstaller 打包的 Python 版。
+> 本仓库以 `go/` 为实现（本机部署的就是它）；`reference/` 下另有一份已冻结的 Python 参考实现。
 > 代码与构建方式见根目录 [README](../README.md)。
 
 ## 问题与结论
@@ -27,7 +27,7 @@ Sparkle 开启 TUN 时，Steam CDN 域名规则交给 `SteamUA` 节点；代理�
 | 路径 | 用途 |
 |---|---|
 | `go/` | Go 实现（静态 ELF，约 2.2 MB），`make -C go build` |
-| `python/` | Python 原版 + PyInstaller onefile 打包配置（约 11.4 MB） |
+| `reference/` | 已冻结的 Python 参考实现 + PyInstaller onefile 打包配置（约 11.4 MB） |
 | `scripts/` | 两版共用的行为对等测试（`make -C go test`） |
 | `docs/Steam下载修复记录.md` | 本文档 |
 
@@ -69,15 +69,15 @@ make -C go build      # CGO_ENABLED=0 + -trimpath -ldflags "-s -w"
 make -C go install    # 装到 ~/.local/bin 并重启用户服务
 ```
 
-**PyInstaller 版**——把解释器和脚本一起打包，约 11.4 MB：
+**PyInstaller 版（已归档，不推荐）**——把解释器和脚本一起打包，约 11.4 MB：
 
 ```bash
-cd python
+cd reference
 uv run pyinstaller --clean --noconfirm --onefile --name steam-ua-proxy steam-ua-proxy.py
 install -m 755 dist/steam-ua-proxy ~/.local/bin/steam-ua-proxy
 ```
 
-两版行为一致（见 `scripts/` 里的对等测试）。打包需在目标 Linux 架构上进行；若当前 Python 版本不受 PyInstaller 支持，使用其支持的 Python 版本构建。验证可执行文件身份：
+Python 版已冻结在 `reference/`，仅作为行为对等测试的基准存在（见 `scripts/`）。打包需在目标 Linux 架构上进行；若当前 Python 版本不受 PyInstaller 支持，使用其支持的 Python 版本构建。验证可执行文件身份：
 
 ```bash
 ~/.local/bin/steam-ua-proxy 8898 >/tmp/steam-ua-proxy-test.log 2>&1 &

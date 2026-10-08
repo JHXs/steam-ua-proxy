@@ -12,7 +12,7 @@
 | 目录 | 内容 |
 |---|---|
 | `go/` | Go 实现（推荐）：`main.go`、`go.mod`、`Makefile` |
-| `python/` | Python 原版：`steam-ua-proxy.py`、`pyproject.toml`、`uv.lock`、`.venv` |
+| `reference/` | 已冻结的 Python 参考实现（**不建议使用**，只作为行为对等测试的基准） |
 | `scripts/` | 两版共用的行为对等测试 |
 | `docs/` | [修复记录](docs/Steam下载修复记录.md) |
 
@@ -50,7 +50,7 @@ git tag -a v0.1.2 -m "v0.1.2" && git push origin v0.1.2
 
 二进制不入库（体积大且平台相关），也无需本地手动上传；跨平台构建靠 Go 的交叉编译（`CGO_ENABLED=0`）。
 
-两版协议行为保持一致：绝对 URL → 相对路径改写、`Drop` 掉 `User-Agent`/`Proxy-Connection`/`Expect`、
+两版协议行为保持一致（`reference/` 的 Python 版已冻结，仅用于对照）：绝对 URL → 相对路径改写、`Drop` 掉 `User-Agent`/`Proxy-Connection`/`Expect`、
 请求体按 `Content-Length` 与 `chunked` 分帧转发、跳过 `1xx`、`HEAD`/`204`/`304` 不读 body、
 keep-alive 复用上游连接、CONNECT 盲转发、CONNECT 到 80 端口时在隧道内逐请求改写 UA。
 隧道不设任何超时（设了会在空闲时被自己掐断）。
@@ -62,13 +62,15 @@ keep-alive 复用上游连接、CONNECT 盲转发、CONNECT 到 80 端口时在�
 make -C go build          # → go/steam-ua-proxy
 make -C go install        # 装到 ~/.local/bin 并重启用户服务
 
-# Python 版（PyInstaller onefile，约 11.4 MB）
-cd python
+# （归档，不推荐）Python 版：PyInstaller onefile，约 11.4 MB
+cd reference
 uv run pyinstaller --clean --noconfirm --onefile --name steam-ua-proxy steam-ua-proxy.py
 ```
 
-> `python/pyproject.toml` 里设了 `[tool.uv] package = false`：本目录不是 Python 包，
+> `reference/pyproject.toml` 里设了 `[tool.uv] package = false`：该目录不是 Python 包，
 > 只用来固定 `pyinstaller` 依赖，不需要 `src/steam_ua_proxy/`。
+> Python 版已冻结，只在 `make -C go test` 里充当行为对等基准——它拿不到 Linux 的
+> `splice(2)` 零拷贝，体积也是 Go 版的 5 倍，新部署请用 Go 版。
 
 Go 工具链：若 `go` 不在 PATH，`go/Makefile` 会回退到 `~/apps/go/bin/go`。
 
@@ -78,6 +80,6 @@ Go 工具链：若 `go` 不在 PATH，`go/Makefile` 会回退到 `~/apps/go/bin/
 make -C go test
 ```
 
-在独立的 user+net namespace 里同时跑 Go 版（8898）和 Python 版（8897），
+在独立的 user+net namespace 里同时跑 Go 版（8898）和 `reference/` 下的 Python 参考版（8897），
 这样普通用户也能监听 80 端口，覆盖「CONNECT 到 80 端口后在隧道内改写 UA」这条关键路径。
 需要 `unshare -rn` 可用；不支持时该用例会失败，其余用例仍有效。

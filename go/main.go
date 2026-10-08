@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -204,28 +205,19 @@ func closeWrite(c net.Conn) {
 	}
 }
 
-// tunnel 双向盲转发中的单向：src → dst，结束后半关闭两端。
+// tunnel 双向盲转发中的单向：src → dst。
+//
+// 只对 dst 做半关闭：src 已经读到 EOF，替它关写方向是越界，而且会连带掐掉
+// 反方向正在写回来的响应（客户端发完请求 half-close 后就被截断）。
 func tunnel(src, dst net.Conn, initial []byte) {
 	if len(initial) > 0 {
-		if err := sendAll(dst, initial); err != nil {
-			closeWrite(src)
+		if _, err := dst.Write(initial); err != nil {
 			closeWrite(dst)
 			return
 		}
 	}
-	buf := make([]byte, bufSize)
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			if werr := sendAll(dst, buf[:n]); werr != nil {
-				break
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-	closeWrite(src)
+	// TCP↔TCP 走 splice(2) 零拷贝，比手写 Read/Write 循环 CPU 低得多
+	_, _ = io.Copy(dst, src)
 	closeWrite(dst)
 }
 

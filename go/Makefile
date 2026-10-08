@@ -12,7 +12,7 @@ build-plain: ## 不裁剪，便于排查
 
 test: build ## 行为对等测试（Go vs Python，需 unshare 可用）
 	chmod +x $(CURDIR)/../scripts/run-tests.sh
-	$(CURDIR)/../scripts/run-tests.sh $(CURDIR)/$(BIN) $(CURDIR)/../python/steam-ua-proxy.py
+	$(CURDIR)/../scripts/run-tests.sh $(CURDIR)/$(BIN) $(CURDIR)/../reference/steam-ua-proxy.py
 
 vet:
 	$(GO) vet ./...

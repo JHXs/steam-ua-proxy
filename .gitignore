@@ -14,4 +14,4 @@ wheels/
 /go/steam-ua-proxy-plain
 
 # PyInstaller 自动生成的 spec
-/python/*.spec
+/reference/*.spec

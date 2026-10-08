@@ -280,11 +280,11 @@ def tunnel(src_sock, dst_sock, initial=b""):
     except OSError:
         pass
     finally:
-        for s in (src_sock, dst_sock):
-            try:
-                s.shutdown(socket.SHUT_WR)
-            except OSError:
-                pass
+        # 只对 dst 半关闭：src 已经 EOF，替它关写方向会掐断反方向正在写回的响应
+        try:
+            dst_sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
 
 
 def serve_connection(client):
