@@ -18,12 +18,9 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 )
 
 const (
@@ -61,22 +58,6 @@ func logf(format string, args ...any) {
 		return
 	}
 	fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
-}
-
-// setProcessName 设置 comm（Linux PR_SET_NAME）。mihomo 按 /proc/<pid>/exe 匹配进程，
-// 这里只是让 ps/top 看起来更清楚。
-func setProcessName(name string) {
-	if runtime.GOOS != "linux" {
-		return
-	}
-	if len(name) > 15 {
-		name = name[:15]
-	}
-	b := append([]byte(name), 0)
-	_, _, errno := syscall.Syscall(syscall.SYS_PRCTL, 15, uintptr(unsafe.Pointer(&b[0])), 0)
-	if errno != 0 {
-		fmt.Fprintln(os.Stderr, "设置进程名失败:", errno)
-	}
 }
 
 func sendAll(c net.Conn, data []byte) error {

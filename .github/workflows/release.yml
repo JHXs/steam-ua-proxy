@@ -1,0 +1,110 @@
+name: release
+
+# 打 tag 后自动构建并发布到 GitHub Release：
+#   git tag -a v0.1.1 -m "..." && git push origin v0.1.1
+# 也可以手动触发（workflow_dispatch）只做构建校验，不创建 release。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}-amd64
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, windows]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+          cache: false          # 本模块没有第三方依赖，缓存无意义
+
+      - name: vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: 构建 ${{ matrix.goos }}/amd64
+        working-directory: go
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: amd64
+          CGO_ENABLED: '0'      # 静态链接，无运行时依赖
+        run: |
+          set -eu
+          ext=""
+          [ "$GOOS" = "windows" ] && ext=".exe"
+          out="steam-ua-proxy-${{ github.ref_name }}-${GOOS}-amd64${ext}"
+          go build -trimpath -ldflags '-s -w' -o "$out" .
+          # 校验和文件名里去掉 .exe，避免 windows 上 sha256sum -c 找不到
+          sha256sum "$out" > "${out%.exe}.sha256"
+          mkdir -p ../dist
+          mv "$out" "${out%.exe}.sha256" ../dist/
+          ls -l ../dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: steam-ua-proxy-${{ matrix.goos }}-amd64
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 校验产物
+        run: |
+          set -eu
+          cd dist
+          sha256sum -c ./*.sha256
+          ls -l
+
+      - name: 创建 release 并上传
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          {
+            echo "只监听 \`127.0.0.1:8899\` 的本地 HTTP 代理：把明文 HTTP 的 \`User-Agent\` 换成普通浏览器 UA，"
+            echo "绕过网络侧「Steam UA + \`/depot/*/chunk/*\`」的拦截；HTTPS(CONNECT) 只做隧道转发。"
+            echo "背景与实测见[修复记录](https://github.com/${GITHUB_REPOSITORY}/blob/main/docs/Steam%E4%B8%8B%E8%BD%BD%E4%BF%AE%E5%A4%8D%E8%AE%B0%E5%BD%95.md)。"
+            echo
+            echo "| 文件 | 平台 | 说明 |"
+            echo "|---|---|---|"
+            echo "| \`steam-ua-proxy-${TAG}-linux-amd64\` | Linux x86_64 | 静态链接 |"
+            echo "| \`steam-ua-proxy-${TAG}-windows-amd64.exe\` | Windows x86_64 | 单文件可执行 |"
+            echo "| \`*.sha256\` | — | 各产物的 SHA256 |"
+            echo
+            echo "用法（Linux）："
+            echo
+            echo '```bash'
+            echo "curl -fsSLO https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/steam-ua-proxy-${TAG}-linux-amd64"
+            echo "chmod +x steam-ua-proxy-${TAG}-linux-amd64"
+            echo "./steam-ua-proxy-${TAG}-linux-amd64      # 监听 127.0.0.1:8899"
+            echo '```'
+            echo
+            echo "Windows 直接双击或用 \`steam-ua-proxy-${TAG}-windows-amd64.exe 8899\` 运行。"
+            echo "TUN 下放行代理自身外连（进程名就是可执行文件名）："
+            echo
+            echo '```yaml'
+            echo "- PROCESS-NAME,steam-ua-proxy,DIRECT        # Linux"
+            echo "- PROCESS-NAME,steam-ua-proxy.exe,DIRECT    # Windows"
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" --title "$TAG" --notes-file notes.md dist/*

@@ -18,24 +18,37 @@
 
 ## 下载预编译二进制
 
-见 [Releases](https://github.com/JHXs/steam-ua-proxy/releases)：
+见 [Releases](https://github.com/JHXs/steam-ua-proxy/releases)：只发布 Go 版（x86_64）。
 
-| Asset | 实现 | 大小 |
+| Asset | 平台 | 大小 |
 |---|---|---|
-| `steam-ua-proxy-<版本>-linux-amd64` | Go，静态链接、无运行时依赖（推荐） | ~2.2 MB |
-| `steam-ua-proxy-<版本>-linux-amd64-pyinstaller` | Python，PyInstaller onefile | ~11.4 MB |
-| `SHA256SUMS` | 两个二进制的校验值 | |
+| `steam-ua-proxy-<版本>-linux-amd64` | Linux x86_64，静态链接、无运行时依赖 | ~2.2 MB |
+| `steam-ua-proxy-<版本>-windows-amd64.exe` | Windows x86_64，单文件 | ~2.3 MB |
+| `*.sha256` | 对应产物的 SHA256 | |
 
 ```bash
-VER=v0.1.0
+VER=v0.1.1
 BASE=https://github.com/JHXs/steam-ua-proxy/releases/download/$VER
-curl -fsSLO $BASE/SHA256SUMS
 curl -fsSLO $BASE/steam-ua-proxy-$VER-linux-amd64
-sha256sum -c SHA256SUMS
+curl -fsSLO $BASE/steam-ua-proxy-$VER-linux-amd64.sha256
+sha256sum -c steam-ua-proxy-$VER-linux-amd64.sha256
 install -m 755 steam-ua-proxy-$VER-linux-amd64 ~/.local/bin/steam-ua-proxy
 ```
 
-二进制不入库（体积大且是平台相关产物），只在 release 上提供；`go/`、`python/` 里有完整的构建方式。
+Windows 直接运行 `steam-ua-proxy-<版本>-windows-amd64.exe`。TUN 下放行代理自身外连（进程名就是可执行文件名）：
+
+```yaml
+- PROCESS-NAME,steam-ua-proxy,DIRECT        # Linux
+- PROCESS-NAME,steam-ua-proxy.exe,DIRECT    # Windows
+```
+
+发布由 [GitHub Actions](.github/workflows/release.yml) 完成，打 tag 即自动构建并上传：
+
+```bash
+git tag -a v0.1.2 -m "v0.1.2" && git push origin v0.1.2
+```
+
+二进制不入库（体积大且平台相关），也无需本地手动上传；跨平台构建靠 Go 的交叉编译（`CGO_ENABLED=0`）。
 
 两版协议行为保持一致：绝对 URL → 相对路径改写、`Drop` 掉 `User-Agent`/`Proxy-Connection`/`Expect`、
 请求体按 `Content-Length` 与 `chunked` 分帧转发、跳过 `1xx`、`HEAD`/`204`/`304` 不读 body、
