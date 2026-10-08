@@ -21,9 +21,9 @@ jobs:
       matrix:
         goos: [linux, windows]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/go.mod
           cache: false          # 本模块没有第三方依赖，缓存无意义
@@ -50,7 +50,7 @@ jobs:
           mv "$out" "${out%.exe}.sha256" ../dist/
           ls -l ../dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: steam-ua-proxy-${{ matrix.goos }}-amd64
           path: dist/*
@@ -62,7 +62,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -107,4 +107,5 @@ jobs:
             echo "- PROCESS-NAME,steam-ua-proxy.exe,DIRECT    # Windows"
             echo '```'
           } > notes.md
-          gh release create "$TAG" --title "$TAG" --notes-file notes.md dist/*
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" \
+            --notes-file notes.md dist/*
