@@ -36,11 +36,9 @@ Sparkle 开启 TUN 时，Steam CDN 域名规则交给 `SteamUA` 节点；代理�
 | 路径 | 用途 |
 |---|---|
 | `~/.local/bin/steam-ua-proxy` | 常驻服务实际运行的可执行文件 |
-| `~/.local/bin/steam-ua-proxy.py` | 代理 Python 源码（备用/对比用） |
 | `~/.config/systemd/user/steam-ua-proxy.service` | 常驻服务，开机启动、异常自动重启 |
 | `~/.config/sparkle/override/1a1d0c0ffee.yaml` | 持久化 Sparkle/Mihomo 节点和规则覆写 |
 | `~/.config/sparkle/work/config.yaml` | Sparkle 当前生成的运行配置 |
-| `~/.local/bin/steam-download` | 非 TUN 下载模式的一键启动脚本 |
 
 服务命令：
 
@@ -114,12 +112,13 @@ proxies+:
 ## 使用与验证
 
 - **TUN 模式**：保持 `steam-ua-proxy.service` 运行，Steam 正常启动并下载；Steam CDN 流量经 `SteamUA`，代理自己的 CDN 外连直连。
-- **手动下载模式**：运行 `steam-download`，它会设置 `http_proxy` 并重启 Steam。
 - 检查代理监听：`ss -ltnp | grep 8899`
 - 检查封禁记录：`grep -c 'disable.htm' ~/.local/share/Steam/logs/content_log.txt`
 - Mihomo 日志应显示 Steam CDN 域名命中 `SteamUA`。
 
-> `steam-download` 在 systemd 服务未运行时的备用启动分支仍使用 Python 源码；TUN 使用时应保持 systemd 服务正常运行。
+> 早期还有一个「非 TUN 手动下载模式」：用 `~/.local/bin/steam-download` 设置 `http_proxy`
+> 并重启 Steam，配套一个 `steam-download.desktop` 菜单项。现在固定走 TUN，已不再需要，
+> 脚本与菜单项均已删除。
 
 ## 已确认的结果与回退
 
@@ -133,4 +132,5 @@ proxies+:
 systemctl --user disable --now steam-ua-proxy.service
 ```
 
-恢复旧规则时，将 Mihomo 规则改回原配置并在 Sparkle 重载；不要删除 `.py` 源码，除非确定不再需要重新打包。
+恢复旧规则时，将 Mihomo 规则改回原配置并在 Sparkle 重载。Python 版源码保留在仓库的
+`reference/` 下，本机不需要再留任何 `.py` 副本。
