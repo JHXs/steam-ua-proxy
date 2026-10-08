@@ -16,6 +16,27 @@
 | `scripts/` | 两版共用的行为对等测试 |
 | `docs/` | [修复记录](docs/Steam下载修复记录.md) |
 
+## 下载预编译二进制
+
+见 [Releases](https://github.com/JHXs/steam-ua-proxy/releases)：
+
+| Asset | 实现 | 大小 |
+|---|---|---|
+| `steam-ua-proxy-<版本>-linux-amd64` | Go，静态链接、无运行时依赖（推荐） | ~2.2 MB |
+| `steam-ua-proxy-<版本>-linux-amd64-pyinstaller` | Python，PyInstaller onefile | ~11.4 MB |
+| `SHA256SUMS` | 两个二进制的校验值 | |
+
+```bash
+VER=v0.1.0
+BASE=https://github.com/JHXs/steam-ua-proxy/releases/download/$VER
+curl -fsSLO $BASE/SHA256SUMS
+curl -fsSLO $BASE/steam-ua-proxy-$VER-linux-amd64
+sha256sum -c SHA256SUMS
+install -m 755 steam-ua-proxy-$VER-linux-amd64 ~/.local/bin/steam-ua-proxy
+```
+
+二进制不入库（体积大且是平台相关产物），只在 release 上提供；`go/`、`python/` 里有完整的构建方式。
+
 两版协议行为保持一致：绝对 URL → 相对路径改写、`Drop` 掉 `User-Agent`/`Proxy-Connection`/`Expect`、
 请求体按 `Content-Length` 与 `chunked` 分帧转发、跳过 `1xx`、`HEAD`/`204`/`304` 不读 body、
 keep-alive 复用上游连接、CONNECT 盲转发、CONNECT 到 80 端口时在隧道内逐请求改写 UA。
