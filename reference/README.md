@@ -23,7 +23,7 @@ CONNECT 到 80 端口时在隧道内逐请求改写 UA、隧道不设超时）�
 
 ## 用法
 
-仅用于复现基准：
+仅用于复现基准（Python 版仍是位置参数传端口；Go 版已改成 `-p/--port`）：
 
 ```bash
 python3 steam-ua-proxy.py 8899        # 直接运行

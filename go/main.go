@@ -7,7 +7,8 @@
 // 用法：
 //
 //	steam-ua-proxy              # 监听 127.0.0.1:8899
-//	steam-ua-proxy 8900         # 换端口
+//	steam-ua-proxy -p 8900      # 换端口
+//	steam-ua-proxy -v           # 打印版本
 //	http_proxy=http://127.0.0.1:8899 steam
 //
 // 只改写明文 HTTP 的 UA；HTTPS(CONNECT) 原样隧道转发。
@@ -15,14 +16,34 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// 版本信息：构建时由链接器注入（make build 与 release workflow 都传 -X）；
+// 源码里只是默认值，裸 go build 就是 "dev"。
+var (
+	version = "dev"
+	commit  = ""
+)
+
+const usageText = `steam-ua-proxy —— 本地 HTTP 代理，只把明文 HTTP 的 User-Agent 换成普通浏览器 UA
+
+用法：steam-ua-proxy [-p 端口]   # 监听 127.0.0.1:端口，默认 8899
+      steam-ua-proxy -v         # 版本信息
+      steam-ua-proxy -h         # 本帮助
+
+示例：http_proxy=http://127.0.0.1:8899 steam
+`
 
 const (
 	listenHost = "127.0.0.1"
@@ -541,12 +562,74 @@ func serveConnection(client net.Conn) {
 	}
 }
 
+// printVersion 打印版本摘要。
+//
+// commit 没被 -X 注入时回退到 go 自动嵌入的 build info（在 git 仓库里构建就有），
+// 而且 -s -w / -trimpath 都裁不掉它（不在符号表里）。
+func printVersion() {
+	rev, dirty := "", false
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+			version = bi.Main.Version // go install pkg@v1.2.3 时是那个 tag
+		}
+		for _, s := range bi.Settings { // vcs.revision / vcs.modified
+			switch s.Key {
+			case "vcs.revision":
+				rev = s.Value
+			case "vcs.modified":
+				dirty = s.Value == "true"
+			}
+		}
+	}
+	if commit == "" { // 只有回退到 build info 时，dirty 才是新信息（-X 的 version 自带 -dirty）
+		commit = rev
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		if dirty && commit != "" {
+			commit += ", dirty"
+		}
+	}
+	if commit != "" {
+		version += " (commit " + commit + ")"
+	}
+	fmt.Printf("steam-ua-proxy %s\nbuilt with %s %s/%s\n",
+		version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
+}
+
 func main() {
 	setProcessName(procName)
+
+	// 参数解析交给标准库 flag（-p 8899 / -p=8899 / --port=8899 都认），
+	// 输出与退出码自己接管：io.Discard 掉 flag 自带的打印，位置参数一律报错。
+	// 当初就是因为它被默默当成端口，才报出 "lookup tcp/-v: unknown port"。
 	port := listenPort
-	if len(os.Args) > 1 {
-		port = os.Args[1]
+	showVersion := false
+	fs := flag.NewFlagSet(procName, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&port, "p", listenPort, "监听端口")
+	fs.StringVar(&port, "port", listenPort, "监听端口（同 -p）")
+	fs.BoolVar(&showVersion, "v", false, "打印版本信息")
+	fs.BoolVar(&showVersion, "version", false, "打印版本信息（同 -v）")
+	fs.BoolVar(&showVersion, "V", false, "打印版本信息（同 -v）")
+
+	switch err := fs.Parse(os.Args[1:]); {
+	case errors.Is(err, flag.ErrHelp): // -h / --help
+		fmt.Print(usageText)
+		return
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "%v\n\n%s", err, usageText)
+		os.Exit(2)
 	}
+	switch {
+	case showVersion:
+		printVersion()
+		return
+	case fs.NArg() > 0:
+		fmt.Fprintf(os.Stderr, "无法识别的参数 %q：端口要用 -p/--port 指定\n\n%s", fs.Arg(0), usageText)
+		os.Exit(2)
+	}
+
 	ln, err := net.Listen("tcp", net.JoinHostPort(listenHost, port))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "监听失败:", err)

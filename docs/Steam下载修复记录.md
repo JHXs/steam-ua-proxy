@@ -78,7 +78,7 @@ install -m 755 dist/steam-ua-proxy ~/.local/bin/steam-ua-proxy
 Python 版已冻结在 `reference/`，仅作为行为对等测试的基准存在（见 `scripts/`）。打包需在目标 Linux 架构上进行；若当前 Python 版本不受 PyInstaller 支持，使用其支持的 Python 版本构建。验证可执行文件身份：
 
 ```bash
-~/.local/bin/steam-ua-proxy 8898 >/tmp/steam-ua-proxy-test.log 2>&1 &
+~/.local/bin/steam-ua-proxy -p 8898 >/tmp/steam-ua-proxy-test.log 2>&1 &
 pid=$!
 sleep 1
 readlink /proc/$pid/exe    # 应指向 ~/.local/bin/steam-ua-proxy
@@ -113,6 +113,8 @@ proxies+:
 
 - **TUN 模式**：保持 `steam-ua-proxy.service` 运行，Steam 正常启动并下载；Steam CDN 流量经 `SteamUA`，代理自己的 CDN 外连直连。
 - 检查代理监听：`ss -ltnp | grep 8899`
+- 换端口用 `steam-ua-proxy -p 8900`（不再把端口当位置参数）
+- 确认跑的是哪个版本：`steam-ua-proxy -v`（`v0.1.2 (commit 769920f)` 这种）
 - 检查封禁记录：`grep -c 'disable.htm' ~/.local/share/Steam/logs/content_log.txt`
 - Mihomo 日志应显示 Steam CDN 域名命中 `SteamUA`。
 

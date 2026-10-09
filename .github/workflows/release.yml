@@ -43,7 +43,14 @@ jobs:
           ext=""
           [ "$GOOS" = "windows" ] && ext=".exe"
           out="steam-ua-proxy-${{ github.ref_name }}-${GOOS}-amd64${ext}"
-          go build -trimpath -ldflags '-s -w' -o "$out" .
+          # 注入版本：链接器 -X 覆盖 main 里的同名变量（-s -w 同时保留）
+          ver="$(git describe --tags --always --dirty 2>/dev/null || echo '${{ github.ref_name }}')"
+          rev="$(git rev-parse --short HEAD)"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=$ver -X main.commit=$rev" \
+            -o "$out" .
+          # 跑不动的平台（windows 产物）只能靠 linux 那份校验 -v 有输出
+          [ "$GOOS" = "linux" ] && "./$out" -v
           # 校验和文件名里去掉 .exe，避免 windows 上 sha256sum -c 找不到
           sha256sum "$out" > "${out%.exe}.sha256"
           mkdir -p ../dist
@@ -97,9 +104,12 @@ jobs:
             echo "curl -fsSLO https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/steam-ua-proxy-${TAG}-linux-amd64"
             echo "chmod +x steam-ua-proxy-${TAG}-linux-amd64"
             echo "./steam-ua-proxy-${TAG}-linux-amd64      # 监听 127.0.0.1:8899"
+            echo "./steam-ua-proxy-${TAG}-linux-amd64 -v   # 查看版本"
             echo '```'
             echo
-            echo "Windows 直接双击或用 \`steam-ua-proxy-${TAG}-windows-amd64.exe 8899\` 运行。"
+            echo "⚠️ 本版起端口只能用 \`-p/--port\` 指定：旧的位置参数写法（\`steam-ua-proxy 8899\`）现在会报错退出，不再当成端口。"
+            echo
+            echo "Windows 直接双击、或用 \`steam-ua-proxy-${TAG}-windows-amd64.exe -p 8899\` 换端口运行。"
             echo "TUN 下放行代理自身外连（进程名就是可执行文件名）："
             echo
             echo '```yaml'

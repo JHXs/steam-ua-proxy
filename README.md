@@ -2,7 +2,7 @@
 
 本地 HTTP 代理，只做一件事：把明文 HTTP 的 `User-Agent` 改成普通浏览器 UA，
 绕过网络侧「Steam UA + `/depot/*/chunk/*`」的上网行为管理拦截。HTTPS(CONNECT) 只做隧道转发。
-监听 `127.0.0.1:8899`（可传参换端口）。
+监听 `127.0.0.1:8899`（`-p/--port` 换端口），`-v` 打印版本信息。
 
 完整的背景、实测数据、Mihomo/Sparkle 配置与回退方法见
 [Steam 下载修复记录](docs/Steam下载修复记录.md)。
@@ -27,12 +27,13 @@
 | `*.sha256` | 对应产物的 SHA256 | |
 
 ```bash
-VER=v0.1.1
+VER=v0.2.0
 BASE=https://github.com/JHXs/steam-ua-proxy/releases/download/$VER
 curl -fsSLO $BASE/steam-ua-proxy-$VER-linux-amd64
 curl -fsSLO $BASE/steam-ua-proxy-$VER-linux-amd64.sha256
 sha256sum -c steam-ua-proxy-$VER-linux-amd64.sha256
 install -m 755 steam-ua-proxy-$VER-linux-amd64 ~/.local/bin/steam-ua-proxy
+steam-ua-proxy -v         # 校验装上的就是 $VER：应打印 steam-ua-proxy $VER (commit …)
 ```
 
 Windows 直接运行 `steam-ua-proxy-<版本>-windows-amd64.exe`。TUN 下放行代理自身外连（进程名就是可执行文件名）：
@@ -60,6 +61,7 @@ keep-alive 复用上游连接、CONNECT 盲转发、CONNECT 到 80 端口时在�
 ```bash
 # Go 版（静态、去符号表，约 2.2 MB）
 make -C go build          # → go/steam-ua-proxy
+make -C go version        # 打印构建出来的版本
 make -C go install        # 装到 ~/.local/bin 并重启用户服务
 
 # （归档，不推荐）Python 版：PyInstaller onefile，约 11.4 MB
@@ -73,6 +75,24 @@ uv run pyinstaller --clean --noconfirm --onefile --name steam-ua-proxy steam-ua-
 > `splice(2)` 零拷贝，体积也是 Go 版的 5 倍，新部署请用 Go 版。
 
 Go 工具链：若 `go` 不在 PATH，`go/Makefile` 会回退到 `~/apps/go/bin/go`。
+
+版本信息（`-v`）由链接器在构建时注入，源码里只是占位默认值：
+
+```bash
+go build -ldflags "-s -w -X main.version=v0.1.2 -X main.commit=$(git rev-parse --short HEAD)" .
+```
+
+`make -C go build` 会自动填 `git describe --tags --always --dirty`，所以打了 tag 的提交
+构建出来就是 `v0.1.2`（工作区不干净则是 `v0.1.2-dirty`）；Release 工作流用同样的 `-X`
+参数，并会跑一次 `./产物 -v` 确认注入成功：
+
+```bash
+steam-ua-proxy v0.1.2-dirty (commit 769920f)
+built with go1.27.1 linux/amd64
+```
+
+没注入时（裸 `go build`）回退到 Go 自动嵌入的 build info，从 `vcs.revision` /
+`vcs.modified` 拼出 commit——这两段在 `-s -w` 之后依然可读。
 
 ## 测试
 
