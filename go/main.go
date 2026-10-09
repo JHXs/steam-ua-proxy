@@ -73,7 +73,10 @@ var httpMethods = map[string]bool{
 	"DELETE": true, "OPTIONS": true, "PATCH": true, "TRACE": true,
 }
 
-var crlfcrlf = []byte("\r\n\r\n")
+var (
+	crlf     = []byte("\r\n")
+	crlfcrlf = []byte("\r\n\r\n")
+)
 
 func logf(format string, args ...any) {
 	if !verbose {
@@ -82,9 +85,10 @@ func logf(format string, args ...any) {
 	fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), fmt.Sprintf(format, args...))
 }
 
-func sendAll(c net.Conn, data []byte) error {
-	_, err := c.Write(data)
-	return err
+// send 写过去；写失败就说明这条连接不能用了（所有调用点都只关心成败）。
+func send(w io.Writer, data []byte) bool {
+	_, err := w.Write(data)
+	return err == nil
 }
 
 // reader 是带缓冲的 socket 读取器，类比 Python 版的 Reader：
@@ -164,52 +168,56 @@ func (r *reader) readToEOF() []byte {
 	return out
 }
 
-// rewriteRequest 把请求行里的绝对 URL 换成 path，并替换 User-Agent。
-func rewriteRequest(head, path []byte) []byte {
-	lines := bytes.Split(head, []byte("\r\n"))
-	reqLine := bytes.SplitN(lines[0], []byte(" "), 3)
-	out := [][]byte{bytes.Join([][]byte{reqLine[0], path, []byte("HTTP/1.1")}, []byte(" "))}
-	for _, line := range lines[1:] {
-		if len(line) == 0 {
-			continue
-		}
-		name := bytes.ToLower(bytes.TrimSpace(bytes.SplitN(line, []byte(":"), 2)[0]))
-		if dropHeaders[string(name)] {
-			continue
-		}
-		out = append(out, line)
-	}
-	out = append(out, append([]byte("User-Agent: "), fakeUA...))
-	return append(bytes.Join(out, []byte("\r\n")), crlfcrlf...)
+// take 取走并清空缓冲区里已读到的剩余字节（改走盲转发时要把它先吐出去）。
+func (r *reader) take() []byte {
+	out := r.buf
+	r.buf = nil
+	return out
 }
 
-// rewriteHeaders 只换 User-Agent，不动请求行（隧道里的请求行已经是相对路径）。
-func rewriteHeaders(head []byte) []byte {
-	lines := bytes.Split(head, []byte("\r\n"))
+// rewrite 重写请求头：请求行换成 reqLine（nil = 保留原样），并替换 User-Agent。
+func rewrite(head, reqLine []byte) []byte {
+	lines := bytes.Split(head, crlf)
 	out := [][]byte{lines[0]}
+	if reqLine != nil {
+		out[0] = reqLine
+	}
 	for _, line := range lines[1:] {
 		if len(line) == 0 {
 			continue
 		}
-		name := bytes.ToLower(bytes.TrimSpace(bytes.SplitN(line, []byte(":"), 2)[0]))
-		if dropHeaders[string(name)] {
+		if name, _ := headerKV(line); dropHeaders[name] {
 			continue
 		}
 		out = append(out, line)
 	}
 	out = append(out, append([]byte("User-Agent: "), fakeUA...))
-	return append(bytes.Join(out, []byte("\r\n")), crlfcrlf...)
+	return append(bytes.Join(out, crlf), crlfcrlf...)
+}
+
+// rewriteRequest 普通代理：请求行是绝对 URL，换成 path。
+func rewriteRequest(head, path []byte) []byte {
+	method, _, _ := bytes.Cut(head, []byte(" "))
+	return rewrite(head, bytes.Join([][]byte{method, path, []byte("HTTP/1.1")}, []byte(" ")))
+}
+
+// rewriteHeaders 隧道里的请求行已经是相对路径，只换 UA。
+func rewriteHeaders(head []byte) []byte { return rewrite(head, nil) }
+
+// headerKV 把一行头拆成字段名（小写）和值。
+func headerKV(line []byte) (name string, value []byte) {
+	n, v, _ := bytes.Cut(line, []byte(":"))
+	return string(bytes.ToLower(bytes.TrimSpace(n))), bytes.TrimSpace(v)
 }
 
 // headerValue 从请求/响应头里取某个头的值（没有就返回 nil）。
 func headerValue(head []byte, name string) []byte {
-	if len(head) < 4 {
+	if len(head) < len(crlfcrlf) {
 		return nil
 	}
-	for _, line := range bytes.Split(head[:len(head)-4], []byte("\r\n"))[1:] {
-		n, v, _ := bytes.Cut(line, []byte(":"))
-		if string(bytes.ToLower(bytes.TrimSpace(n))) == name {
-			return bytes.TrimSpace(v)
+	for _, line := range bytes.Split(head[:len(head)-len(crlfcrlf)], crlf)[1:] {
+		if n, v := headerKV(line); n == name {
+			return v
 		}
 	}
 	return nil
@@ -231,11 +239,9 @@ func closeWrite(c net.Conn) {
 // 只对 dst 做半关闭：src 已经读到 EOF，替它关写方向是越界，而且会连带掐掉
 // 反方向正在写回来的响应（客户端发完请求 half-close 后就被截断）。
 func tunnel(src, dst net.Conn, initial []byte) {
-	if len(initial) > 0 {
-		if _, err := dst.Write(initial); err != nil {
-			closeWrite(dst)
-			return
-		}
+	if len(initial) > 0 && !send(dst, initial) {
+		closeWrite(dst)
+		return
 	}
 	// TCP↔TCP 走 splice(2) 零拷贝，比手写 Read/Write 循环 CPU 低得多
 	_, _ = io.Copy(dst, src)
@@ -257,19 +263,14 @@ func serveTunneledHTTP(client, upstream net.Conn, initial []byte) {
 		method := firstToken(head)
 		if !httpMethods[method] {
 			// 不是明文 HTTP（比如 TLS），退回盲转发
-			leftover := r.buf
-			r.buf = nil
-			if err := sendAll(upstream, append(head, leftover...)); err != nil {
+			if !send(upstream, append(head, r.take()...)) {
 				return
 			}
 			go tunnel(client, upstream, nil)
 			tunnel(upstream, client, nil)
 			return
 		}
-		if err := sendAll(upstream, rewriteHeaders(head)); err != nil {
-			return
-		}
-		if !relayRequestBody(r, upstream, head) {
+		if !send(upstream, rewriteHeaders(head)) || !relayRequestBody(r, upstream, head) {
 			return
 		}
 		if !forwardResponse(ur, client, method) {
@@ -278,173 +279,111 @@ func serveTunneledHTTP(client, upstream net.Conn, initial []byte) {
 	}
 }
 
-// relayRequestBody 把请求体也转发给上游。
-//
-// 只转请求头的话，带 body 的请求（POST 等）会把剩下的 body 字节当成下一个
-// 请求头来解析，整条连接直接破帧 —— 表现就是经代理的 POST 全部失败。
-func relayRequestBody(r *reader, upstream net.Conn, head []byte) bool {
-	if te := headerValue(head, "transfer-encoding"); te != nil &&
-		bytes.Contains(bytes.ToLower(te), []byte("chunked")) {
-		for {
-			line, ok := r.readUntil([]byte("\r\n"))
-			if !ok {
-				return false
-			}
-			if err := sendAll(upstream, line); err != nil {
-				return false
-			}
-			size, err := strconv.ParseInt(string(bytes.SplitN(bytes.TrimSpace(line), []byte(";"), 2)[0]), 16, 64)
-			if err != nil {
-				return false
-			}
-			if size == 0 {
-				for {
-					trailer, ok := r.readUntil([]byte("\r\n"))
-					if !ok {
-						return false
-					}
-					if err := sendAll(upstream, trailer); err != nil {
-						return false
-					}
-					if bytes.Equal(trailer, []byte("\r\n")) {
-						return true
-					}
-				}
-			}
-			data := r.readExact(int(size))
-			if len(data) != int(size) {
-				return false
-			}
-			if err := sendAll(upstream, data); err != nil {
-				return false
-			}
-			if err := sendAll(upstream, r.readExact(2)); err != nil { // 每个 chunk 后面的 CRLF
-				return false
-			}
-		}
-	}
+// isChunked 判断 head 是不是 chunked 编码。
+func isChunked(head []byte) bool {
+	te := headerValue(head, "transfer-encoding")
+	return bytes.Contains(bytes.ToLower(te), []byte("chunked"))
+}
 
-	if length := headerValue(head, "content-length"); length != nil {
-		remaining, err := strconv.Atoi(string(length))
-		if err != nil {
+// chunkSize 解析 chunk 长度行（如 "1a3f\r\n"，忽略 ";ext" 段）。
+func chunkSize(line []byte) (int, bool) {
+	n, err := strconv.ParseInt(string(bytes.SplitN(bytes.TrimSpace(line), []byte(";"), 2)[0]), 16, 64)
+	return int(n), err == nil && n >= 0
+}
+
+// copyN 转发定长 body 的 n 字节。
+func copyN(r *reader, w io.Writer, n int) bool {
+	for n > 0 {
+		piece := r.readExact(min(bufSize, n))
+		if len(piece) == 0 || !send(w, piece) {
 			return false
 		}
-		for remaining > 0 {
-			want := bufSize
-			if remaining < want {
-				want = remaining
-			}
-			piece := r.readExact(want)
-			if len(piece) == 0 {
-				return false
-			}
-			if err := sendAll(upstream, piece); err != nil {
-				return false
-			}
-			remaining -= len(piece)
-		}
+		n -= len(piece)
 	}
 	return true
 }
 
-// forwardResponse 按 HTTP 分帧把响应完整转发回去；返回是否还能继续复用连接。
-func forwardResponse(src *reader, dst net.Conn, method string) bool {
-	var head []byte
+// copyChunked 转发 chunked body。
+func copyChunked(r *reader, w io.Writer) bool {
 	for {
-		var ok bool
-		head, ok = src.readUntil(crlfcrlf)
+		line, ok := r.readUntil(crlf)
+		if !ok || !send(w, line) {
+			return false
+		}
+		size, ok := chunkSize(line)
 		if !ok {
 			return false
 		}
-		if err := sendAll(dst, head); err != nil {
+		if size == 0 {
+			return copyTrailer(r, w)
+		}
+		data := r.readExact(size + 2) // chunk 数据 + 后面的 CRLF
+		if len(data) != size+2 || !send(w, data) {
 			return false
 		}
-		statusLine := bytes.SplitN(head, []byte("\r\n"), 2)[0]
-		fields := bytes.Fields(statusLine)
+	}
+}
+
+// copyTrailer 转发 chunked 末尾的 trailer，直到空行。
+func copyTrailer(r *reader, w io.Writer) bool {
+	for {
+		line, ok := r.readUntil(crlf)
+		if !ok || !send(w, line) {
+			return false
+		}
+		if bytes.Equal(line, crlf) {
+			return true
+		}
+	}
+}
+
+// relayRequestBody 把请求体也转发给上游。
+//
+// 只转请求头的话，带 body 的请求（POST 等）会把剩下的 body 字节当成下一个
+// 请求头来解析，整条连接直接破帧 —— 表现就是经代理的 POST 全部失败。
+func relayRequestBody(r *reader, upstream io.Writer, head []byte) bool {
+	if isChunked(head) {
+		return copyChunked(r, upstream)
+	}
+	cl := headerValue(head, "content-length")
+	if cl == nil {
+		return true // 没有 body
+	}
+	n, err := strconv.Atoi(string(cl))
+	return err == nil && n >= 0 && copyN(r, upstream, n)
+}
+
+// forwardResponse 按 HTTP 分帧把响应完整转发回去；返回是否还能继续复用连接。
+func forwardResponse(src *reader, dst io.Writer, method string) bool {
+	var head []byte
+	var status int
+	for { // 1xx 是中间响应，转完继续读真正的响应
+		var ok bool
+		head, ok = src.readUntil(crlfcrlf)
+		if !ok || !send(dst, head) {
+			return false
+		}
+		fields := bytes.Fields(bytes.SplitN(head, crlf, 2)[0])
 		if len(fields) < 2 {
 			return false
 		}
-		status, err := strconv.Atoi(string(fields[1]))
-		if err != nil {
-			return false
-		}
-		if status >= 200 { // 1xx 是中间响应，转完继续读真正的响应
+		if status, _ = strconv.Atoi(string(fields[1])); status >= 200 {
 			break
 		}
 	}
 
-	headers := map[string]string{}
-	for _, line := range bytes.Split(head[:len(head)-4], []byte("\r\n"))[1:] {
-		name, value, _ := bytes.Cut(line, []byte(":"))
-		headers[string(bytes.ToLower(bytes.TrimSpace(name)))] = string(bytes.ToLower(bytes.TrimSpace(value)))
-	}
-	status, _ := strconv.Atoi(string(bytes.Fields(bytes.SplitN(head, []byte("\r\n"), 2)[0])[1]))
-
 	if method == "HEAD" || status == 204 || status == 304 {
-		return true
+		return true // 这几个响应没有 body
 	}
-	if strings.Contains(headers["transfer-encoding"], "chunked") {
-		for {
-			line, ok := src.readUntil([]byte("\r\n"))
-			if !ok {
-				return false
-			}
-			if err := sendAll(dst, line); err != nil {
-				return false
-			}
-			size, err := strconv.ParseInt(string(bytes.SplitN(bytes.TrimSpace(line), []byte(";"), 2)[0]), 16, 64)
-			if err != nil {
-				return false
-			}
-			if size == 0 {
-				for {
-					trailer, ok := src.readUntil([]byte("\r\n"))
-					if !ok {
-						return false
-					}
-					if err := sendAll(dst, trailer); err != nil {
-						return false
-					}
-					if bytes.Equal(trailer, []byte("\r\n")) {
-						return true
-					}
-				}
-			}
-			data := src.readExact(int(size))
-			if len(data) != int(size) {
-				return false
-			}
-			if err := sendAll(dst, data); err != nil {
-				return false
-			}
-			if err := sendAll(dst, src.readExact(2)); err != nil {
-				return false
-			}
-		}
+	if isChunked(head) {
+		return copyChunked(src, dst)
 	}
-	if cl, ok := headers["content-length"]; ok {
-		remaining, err := strconv.Atoi(cl)
-		if err != nil {
-			return false
-		}
-		for remaining > 0 {
-			want := bufSize
-			if remaining < want {
-				want = remaining
-			}
-			piece := src.readExact(want)
-			if len(piece) == 0 {
-				return false
-			}
-			if err := sendAll(dst, piece); err != nil {
-				return false
-			}
-			remaining -= len(piece)
-		}
-		return true
+	if cl := headerValue(head, "content-length"); cl != nil {
+		n, err := strconv.Atoi(string(cl))
+		return err == nil && n >= 0 && copyN(src, dst, n)
 	}
-	// 读到连接关闭为止
-	_ = sendAll(dst, src.readToEOF())
+	// 既没长度也不是 chunked：读到连接关闭为止，连接不能复用
+	_ = send(dst, src.readToEOF())
 	return false
 }
 
@@ -467,7 +406,7 @@ func serveConnection(client net.Conn) {
 		if !ok {
 			return
 		}
-		line := bytes.SplitN(head, []byte("\r\n"), 2)[0]
+		line := bytes.SplitN(head, crlf, 2)[0]
 		parts := bytes.Fields(line)
 		if len(parts) < 3 {
 			return
@@ -489,15 +428,14 @@ func serveConnection(client net.Conn) {
 				logf("连接结束: dial %s:%s: %v", host, portStr, err)
 				return
 			}
-			if err := sendAll(client, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+			if !send(client, []byte("HTTP/1.1 200 Connection Established\r\n\r\n")) {
 				_ = server.Close()
 				return
 			}
 			// 隧道是盲转发，两端都清掉超时
 			_ = server.SetDeadline(time.Time{})
 			_ = client.SetDeadline(time.Time{})
-			leftover := r.buf
-			r.buf = nil
+			leftover := r.take()
 			if port == 80 {
 				// 明文 HTTP 隧道：里面也要换 UA（mihomo 把本代理当节点用时就是这种）
 				serveTunneledHTTP(client, server, leftover)
@@ -545,13 +483,9 @@ func serveConnection(client net.Conn) {
 			logf("新连接 %s", key)
 		}
 
-		if err := sendAll(upstream, rewriteRequest(head, []byte(path))); err != nil {
-			break
-		}
-		if !relayRequestBody(r, upstream, head) {
-			break
-		}
-		if !forwardResponse(upReader, client, method) {
+		if !send(upstream, rewriteRequest(head, []byte(path))) ||
+			!relayRequestBody(r, upstream, head) ||
+			!forwardResponse(upReader, client, method) {
 			break
 		}
 	}

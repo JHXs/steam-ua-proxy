@@ -46,13 +46,14 @@ Windows 直接运行 `steam-ua-proxy-<版本>-windows-amd64.exe`。TUN 下放行
 发布由 [GitHub Actions](.github/workflows/release.yml) 完成，打 tag 即自动构建并上传：
 
 ```bash
-git tag -a v0.1.2 -m "v0.1.2" && git push origin v0.1.2
+git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
 ```
 
 二进制不入库（体积大且平台相关），也无需本地手动上传；跨平台构建靠 Go 的交叉编译（`CGO_ENABLED=0`）。
 
 两版协议行为保持一致（`reference/` 的 Python 版已冻结，仅用于对照）：绝对 URL → 相对路径改写、`Drop` 掉 `User-Agent`/`Proxy-Connection`/`Expect`、
-请求体按 `Content-Length` 与 `chunked` 分帧转发、跳过 `1xx`、`HEAD`/`204`/`304` 不读 body、
+请求体按 `Content-Length` 与 `chunked` 分帧转发（含 chunk 扩展与末尾 trailer）、
+`1xx` 中间响应转发后继续读真正的响应、`HEAD`/`204`/`304` 不读 body、
 keep-alive 复用上游连接、CONNECT 盲转发、CONNECT 到 80 端口时在隧道内逐请求改写 UA。
 隧道不设任何超时（设了会在空闲时被自己掐断）。
 
