@@ -80,8 +80,20 @@ def handle(c):
                        + b"BODY=" + body + b"\n"
                        + b"CONNS=" + str(my).encode() + b"\n"
                        + b"TARGET=" + target)
+            if target == b"/chunked":
+                # 分块响应（带 trailer）：验证代理原样转发分帧
+                chunks = b""
+                for i in range(0, len(payload), 16):
+                    part = payload[i:i + 16]
+                    chunks += b"%x;ext=1\r\n%s\r\n" % (len(part), part)
+                c.sendall(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                          b"Trailer: X-Sum\r\n\r\n" + chunks + b"0\r\nX-Sum: ok\r\n\r\n")
+                continue
             resp = (b"HTTP/1.1 200 OK\r\nContent-Length: " + str(len(payload)).encode()
                     + b"\r\n\r\n")
+            if target == b"/interim":
+                # 先发 1xx 中间响应，再发真正的响应
+                resp = b"HTTP/1.1 100 Continue\r\n\r\n" + resp
             c.sendall(resp if method == b"HEAD" else resp + payload)
     except OSError:
         return

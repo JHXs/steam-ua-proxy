@@ -164,6 +164,28 @@ def case_head():
           f"status={status}")
 
 
+def case_chunked_response():
+    c = Client(PROXY)
+    c.send(build("GET", f"http://127.0.0.1:{ECHO}/chunked"))
+    status, body = c.read_response()
+    c.close()
+    check("chunked 响应（带 trailer + chunk 扩展）：分帧原样转发",
+          status == 200 and CHROME in body and b"TARGET=/chunked" in body,
+          f"status={status} {body[:110]!r}")
+
+
+def case_interim_response():
+    c = Client(PROXY)
+    c.send(build("GET", f"http://127.0.0.1:{ECHO}/interim"))
+    first = c.read_head()  # 代理要先把 1xx 转回来
+    status, body = c.read_response()  # 然后才是真正的响应
+    c.close()
+    line = first.split(b"\r\n")[0]
+    check("1xx 中间响应：转发后继续读真正的响应",
+          b"100" in line and status == 200 and b"TARGET=/interim" in body,
+          f"first={line!r} status={status}")
+
+
 def case_connect_raw():
     c = Client(PROXY)
     ok = c.connect(f"127.0.0.1:{RAW}")
@@ -198,7 +220,8 @@ def case_idle_tunnel():
 
 
 for fn in (case_get, case_post_content_length, case_post_chunked, case_expect_100,
-           case_keepalive, case_head, case_connect_raw, case_connect_80_http):
+           case_keepalive, case_head, case_chunked_response, case_interim_response,
+           case_connect_raw, case_connect_80_http):
     try:
         fn()
     except Exception as exc:  # noqa: BLE001
